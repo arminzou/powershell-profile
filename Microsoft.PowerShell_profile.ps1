@@ -240,6 +240,9 @@ function uptime {
                 $dateFormat = 'yyyy-MM-dd'
             } elseif ($lastBootStr -match '^\d{2}\.\d{2}\.\d{4}') {
                 $dateFormat = 'dd.MM.yyyy'
+            } elseif ($lastBootStr -match '^\d{1,2}/\d{1,2}/\d{4}') {
+                # Add this new condition for US date format with single digits (M/d/yyyy)
+                $dateFormat = 'M/d/yyyy'
             }
             
             # check time format

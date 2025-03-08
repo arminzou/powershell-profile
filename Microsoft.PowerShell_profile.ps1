@@ -522,14 +522,94 @@ Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock $scriptblock
 # Get theme from profile.ps1 or use a default theme
 function Get-Theme {
     if (Test-Path -Path $PROFILE.CurrentUserAllHosts -PathType leaf) {
-        $existingTheme = Select-String -Raw -Path $PROFILE.CurrentUserAllHosts -Pattern "oh-my-posh init pwsh --config"
-        if ($null -ne $existingTheme) {
-            Invoke-Expression $existingTheme
+        $themeLines = Select-String -Path $PROFILE.CurrentUserAllHosts -Pattern "oh-my-posh init pwsh --config"
+        
+        if ($themeLines -and $themeLines.Count -gt 0) {
+            # Take the first theme line found
+            $themeLine = $themeLines[0].Line.Trim()
+            Invoke-Expression $themeLine
             return
         }
+        # Default if no theme found
         oh-my-posh init pwsh --config https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/cobalt2.omp.json | Invoke-Expression
     } else {
         oh-my-posh init pwsh --config https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/cobalt2.omp.json | Invoke-Expression
+    }
+}
+
+# Theme switching functionality
+function Set-PoshTheme {
+    param(
+        [Parameter(Position=0, Mandatory=$false)]
+        [string]$ThemeName,
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$List
+    )
+    
+    $themes = @{
+        "default" = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/jandedobbeleer.omp.json"
+        "json" = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/json.omp.json"
+        "tony" = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/tonybaloney.omp.json"
+        "clean" = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/clean-detailed.omp.json"
+        "atomic" = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/atomic.omp.json"
+        "azure" = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/cloud-native-azure.omp.json"
+    }
+    
+    if ($List) {
+        Write-Host "Available themes:" -ForegroundColor Cyan
+        $themes.Keys | Sort-Object | ForEach-Object {
+            Write-Host "  $_" -ForegroundColor Green
+        }
+        return
+    }
+    
+    if ([string]::IsNullOrEmpty($ThemeName)) {
+        Write-Host "Current theme configuration:" -ForegroundColor Cyan
+        $currentConfig = Get-Content -Path $PROFILE.CurrentUserAllHosts -ErrorAction SilentlyContinue | 
+                         Select-String "oh-my-posh init pwsh --config" | 
+                         Select-Object -First 1
+        
+        if ($currentConfig) {
+            Write-Host $currentConfig -ForegroundColor Yellow
+        } else {
+            Write-Host "No theme configuration found in custom profile." -ForegroundColor Yellow
+        }
+        return
+    }
+    
+    if ($themes.ContainsKey($ThemeName)) {
+        $themeUrl = $themes[$ThemeName]
+        
+        # Apply theme immediately
+        oh-my-posh init pwsh --config $themeUrl | Invoke-Expression
+        
+        # Save to custom profile
+        $customProfilePath = $PROFILE.CurrentUserAllHosts
+        $customProfileContent = Get-Content -Path $customProfilePath -ErrorAction SilentlyContinue
+        
+        # If the file doesn't exist, create it
+        if (-not $customProfileContent) {
+            $customProfileContent = @()
+        }
+        
+        # Remove any existing theme line
+        $newContent = $customProfileContent | Where-Object { -not $_.Contains("oh-my-posh init pwsh --config") }
+        
+        # Add the new theme line at the beginning
+        $newContent = @("oh-my-posh init pwsh --config `"$themeUrl`" | Invoke-Expression") + $newContent
+        
+        # Save the file
+        $newContent | Set-Content -Path $customProfilePath
+        
+        Write-Host "Theme changed to $ThemeName" -ForegroundColor Green
+        Write-Host "The theme has been applied and saved to your custom profile." -ForegroundColor Green
+    } else {
+        Write-Host "Theme not found: $ThemeName" -ForegroundColor Red
+        Write-Host "Available themes:" -ForegroundColor Cyan
+        $themes.Keys | Sort-Object | ForEach-Object {
+            Write-Host "  $_" -ForegroundColor Green
+        }
     }
 }
 
@@ -562,6 +642,8 @@ $($PSStyle.Foreground.Green)Update-Profile$($PSStyle.Reset) - Checks for profile
 $($PSStyle.Foreground.Green)Update-PowerShell$($PSStyle.Reset) - Checks for the latest PowerShell release and updates if a new version is available.
 
 $($PSStyle.Foreground.Green)Edit-Profile$($PSStyle.Reset) - Opens the current user's profile for editing using the configured editor.
+
+$($PSStyle.Foreground.Green)Set-PoshTheme$($PSStyle.Reset) [themeName] - Changes your PowerShell prompt theme. Use without a name to see current theme, or with -List to see all available themes.
 
 $($PSStyle.Foreground.Green)touch$($PSStyle.Reset) <file> - Creates a new empty file.
 

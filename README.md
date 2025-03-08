@@ -40,7 +40,23 @@ PS> oh-my-posh font install
     ↑/k up • ↓/j down • q quit • ? more</pre>
 3. With the up/down arrow keys, select the font you would like to install and press <kbd>ENTER</kbd>
 4. DONE!
-   
+
+## Theme Customization
+
+This PowerShell profile includes an easy way to switch between different oh-my-posh themes:
+
+```powershell
+# List all available themes
+Set-PoshTheme -List
+
+# Switch to a specific theme
+Set-PoshTheme clean
+Set-PoshTheme atomic
+Set-PoshTheme azure
+
+# Check current theme
+Set-PoshTheme
+
 ## Customize this profile
 
 **Do not make any changes to the `Microsoft.PowerShell_profile.ps1` file**, since it's hashed and automatically overwritten by any commits to this repository.

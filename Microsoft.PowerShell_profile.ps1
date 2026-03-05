@@ -12,7 +12,7 @@ $config = @{
     InstallMissingModules = $true  # Auto-install missing modules
     
     # UI settings
-    DefaultTheme          = "clean-detailed"  # Default Oh-My-Posh theme if not set elsewhere
+    DefaultTheme          = "powerlevel10k_lean"  # Default Oh-My-Posh theme if not set elsewhere
     EnablePredictions     = $true  # Enable PSReadLine predictions
     PredictionViewStyle   = "ListView" # Style for predictions
     MaxHistoryCount       = 10000  # Maximum number of commands to store in history
@@ -80,9 +80,9 @@ $config.ModulesToLoad | ForEach-Object {
     # Check if module is already loaded
     if (-not (Get-Module -Name $moduleName)) {
         $modulePath = $moduleSearchRoots |
-            ForEach-Object { Join-Path $_ $moduleName } |
-            Where-Object { Test-Path $_ } |
-            Select-Object -First 1
+        ForEach-Object { Join-Path $_ $moduleName } |
+        Where-Object { Test-Path $_ } |
+        Select-Object -First 1
 
         if ($modulePath) {
             try {
@@ -231,21 +231,35 @@ Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock $scriptblock
 
 # Get theme from profile.ps1 or use a default theme
 function Get-Theme {
-    # Try to fetch custom theme from GitHub repository
-    $customThemeUrl = "https://raw.githubusercontent.com/arminzou/PowerShell-Profile/master/CustomThemes/$($config.DefaultTheme).omp.json"
+    $themeFileName = "$($config.DefaultTheme).omp.json"
+    $localThemeRoots = @(
+        (Join-Path $PSScriptRoot "CustomThemes"),
+        (Join-Path "$env:USERPROFILE\Documents\PowerShell" "CustomThemes")
+    ) | Select-Object -Unique
+
+    $localThemePath = $localThemeRoots |
+    ForEach-Object { Join-Path $_ $themeFileName } |
+    Where-Object { Test-Path $_ -PathType Leaf } |
+    Select-Object -First 1
+
+    if ($localThemePath) {
+        oh-my-posh init pwsh --config $localThemePath | Invoke-Expression
+        return
+    }
+
+    $officialThemeUrl = "https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/$themeFileName"
     try {
-        $response = Invoke-WebRequest -Uri $customThemeUrl -UseBasicParsing
+        $response = Invoke-WebRequest -Uri $officialThemeUrl -UseBasicParsing -Method Head -ErrorAction Stop
         if ($response.StatusCode -eq 200) {
-            oh-my-posh init pwsh --config $customThemeUrl | Invoke-Expression
+            oh-my-posh init pwsh --config $officialThemeUrl | Invoke-Expression
             return
         }
     }
     catch {
-        Write-Warning "Custom theme not found in repository. Falling back to default theme..."
+        # No warning here; we warn once below if neither source has the theme.
     }
 
-    # Fallback to default theme from oh-my-posh
-    oh-my-posh init pwsh --config https://raw.githubusercontent.com/JanDeDobbeleer/oh-my-posh/main/themes/$($config.DefaultTheme).omp.json | Invoke-Expression
+    Write-Warning "Theme '$themeFileName' was not found in local CustomThemes or official Oh My Posh themes."
 }
 
 ## Final Line to set prompt

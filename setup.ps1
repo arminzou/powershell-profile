@@ -70,7 +70,16 @@ function Install-NerdFonts {
     try {
         [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
         $fontFamilies = (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name
-        if ($fontFamilies -notcontains "${FontDisplayName}") {
+        $fontsDir = Join-Path $env:WINDIR "Fonts"
+        $normalizedDisplayName = ($FontDisplayName -replace '\s', '')
+        $normalizedFontName = ($FontName -replace '\s', '')
+        $fontFilesExist = @(
+            "$normalizedFontName*.ttf",
+            "$normalizedDisplayName*.ttf"
+        ) | ForEach-Object { Get-ChildItem -Path $fontsDir -Filter $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+
+        $familyExists = ($fontFamilies -contains $FontDisplayName) -or ($fontFamilies -like "$FontDisplayName*")
+        if (-not $familyExists -and -not $fontFilesExist) {
             Write-Host "Downloading and installing ${FontDisplayName} font..."
             $fontZipUrl = "https://github.com/ryanoasis/nerd-fonts/releases/download/v${Version}/${FontName}.zip"
             $zipFilePath = "$env:TEMP\${FontName}.zip"
@@ -105,7 +114,7 @@ function Install-NerdFonts {
             }
         }
         else {
-            Write-Host "Font ${FontDisplayName} already installed."
+            Write-Host "Font ${FontDisplayName} already installed. Skipping installation."
         }
         return $true
     }
@@ -407,12 +416,13 @@ Write-Host "4. Test Terminal-Icons by running: Get-ChildItem | Format-Table -Vie
 Write-Host "5. Test zoxide by running: z --help"
 Write-Host "============================="
 
-# If running from a cloned repo, configure symlink-based profile/module/theme setup.
+# If running from a cloned repo, configure symlink-based profile setup.
 $setProfileScript = Join-Path -Path $PSScriptRoot -ChildPath "setprofile.ps1"
 if (Test-Path -Path $setProfileScript -PathType Leaf) {
     try {
-        Write-Host "`nConfiguring symlink-based profile/module/theme setup..." -ForegroundColor Cyan
+        Write-Host "`nConfiguring symlink-based profile setup..." -ForegroundColor Cyan
         & $setProfileScript
+        Write-Host "Optional: run .\setprofile-repo-assets.ps1 to link repo Modules/CustomThemes." -ForegroundColor DarkGray
     }
     catch {
         Write-Warning "Failed to run setprofile.ps1 automatically: $($_.Exception.Message)"

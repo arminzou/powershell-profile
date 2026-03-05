@@ -58,10 +58,14 @@ Use layered customization:
 2. Run `.\setup.ps1` (recommended) from the repo root.
 3. Edit your local override file at `$HOME\Documents\PowerShell\profile.local.ps1`.
 
-When run from a clone, `setup.ps1` calls `setprofile.ps1` to create symlinks for:
+When run from a clone, `setup.ps1` calls `setprofile.ps1` to create a symlink for:
 - your profile file
-- repo modules into `$HOME\Documents\PowerShell\Modules`
-- repo custom themes into `$HOME\Documents\PowerShell\CustomThemes`
+
+Repo `Modules` and `CustomThemes` are now optional. If you want those linked from the repo, run:
+
+```powershell
+.\setprofile-repo-assets.ps1
+```
 
 `setprofile.ps1` is kept as a fast re-link utility (for example, after moving the repo path).
 The repo profile loads `profile.local.ps1` (your machine/user-specific overrides) at the end.

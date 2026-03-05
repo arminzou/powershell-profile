@@ -69,34 +69,6 @@ if (Test-Path -LiteralPath $allHostsProfile) {
     }
 }
 
-$modulesSource = Join-Path -Path $repoRoot -ChildPath "Modules"
-$modulesTargetRoot = Join-Path -Path $targetProfileDir -ChildPath "Modules"
-if (-not (Test-Path -Path $modulesTargetRoot)) {
-    New-Item -Path $modulesTargetRoot -ItemType Directory -Force | Out-Null
-}
-
-if (Test-Path -Path $modulesSource -PathType Container) {
-    Get-ChildItem -Path $modulesSource -Directory | ForEach-Object {
-        $source = $_.FullName
-        $target = Join-Path -Path $modulesTargetRoot -ChildPath $_.Name
-        Ensure-ProfileSymlink -Path $target -Target $source
-    }
-}
-
-$themesSource = Join-Path -Path $repoRoot -ChildPath "CustomThemes"
-$themesTargetRoot = Join-Path -Path $targetProfileDir -ChildPath "CustomThemes"
-if (-not (Test-Path -Path $themesTargetRoot)) {
-    New-Item -Path $themesTargetRoot -ItemType Directory -Force | Out-Null
-}
-
-if (Test-Path -Path $themesSource -PathType Container) {
-    Get-ChildItem -Path $themesSource -File | ForEach-Object {
-        $source = $_.FullName
-        $target = Join-Path -Path $themesTargetRoot -ChildPath $_.Name
-        Ensure-ProfileSymlink -Path $target -Target $source
-    }
-}
-
 $localOverride = Join-Path -Path $targetProfileDir -ChildPath "profile.local.ps1"
 $localTemplate = Join-Path -Path $repoRoot -ChildPath "profile.local.example.ps1"
 if ((-not (Test-Path -Path $localOverride -PathType Leaf)) -and (Test-Path -Path $localTemplate -PathType Leaf)) {

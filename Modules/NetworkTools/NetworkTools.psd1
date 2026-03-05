@@ -42,7 +42,7 @@
         'Get-PubIP',
         'flushdns',
         'pingtest',
-        'netstat',
+        'nstat',
         'winutil',
         'winutildev'
     )

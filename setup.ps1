@@ -1,19 +1,62 @@
 # Ensure the script can run with elevated privileges
 if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
     Write-Warning "Please run this script as an Administrator!"
-    break
+    exit 1
 }
 
 # Function to test internet connectivity
 function Test-InternetConnection {
     try {
-        Test-Connection -ComputerName www.google.com -Count 1 -ErrorAction Stop | Out-Null
+        Invoke-WebRequest -Uri "https://github.com" -Method Head -TimeoutSec 5 | Out-Null
         return $true
     }
     catch {
         Write-Warning "Internet connection is required but not available. Please check your connection."
         return $false
     }
+}
+
+function Backup-FileIfExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$BackupPath
+    )
+
+    if (Test-Path -Path $Path -PathType Leaf) {
+        Move-Item -Path $Path -Destination $BackupPath -Force
+    }
+}
+
+function Save-ProfileFromBestSource {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationPath
+    )
+
+    $localRepoProfile = Join-Path -Path $PSScriptRoot -ChildPath "Microsoft.PowerShell_profile.ps1"
+    if (Test-Path -Path $localRepoProfile -PathType Leaf) {
+        Copy-Item -Path $localRepoProfile -Destination $DestinationPath -Force
+        return
+    }
+
+    $candidateUrls = @(
+        "https://raw.githubusercontent.com/arminzou/PowerShell-Profile/main/Microsoft.PowerShell_profile.ps1",
+        "https://raw.githubusercontent.com/arminzou/PowerShell-Profile/master/Microsoft.PowerShell_profile.ps1"
+    )
+
+    foreach ($url in $candidateUrls) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $DestinationPath -UseBasicParsing
+            return
+        }
+        catch {
+            # Try next URL candidate.
+        }
+    }
+
+    throw "Failed to download profile from repository."
 }
 
 # Function to install Nerd Fonts
@@ -74,7 +117,7 @@ function Install-NerdFonts {
 
 # Check for internet connectivity before proceeding
 if (-not (Test-InternetConnection)) {
-    break
+    exit 1
 }
 
 # Initialize success tracking
@@ -97,64 +140,41 @@ if (!(Test-Path -Path $profilePath)) {
     New-Item -Path $profilePath -ItemType "directory" | Out-Null
 }
 
-if (!(Test-Path -Path $PROFILE -PathType Leaf)) {
-    try {
+try {
+    $profileExists = Test-Path -Path $PROFILE -PathType Leaf
+    $mainBackupPath = Join-Path $profilePath "oldprofile.ps1"
+    $vscodeProfilePath = Join-Path $profilePath "Microsoft.VSCode_profile.ps1"
+    $vscodeBackupPath = Join-Path $profilePath "oldvscodeprofile.ps1"
+
+    if ($profileExists) {
+        Write-Host "Profile found, backing up and updating profile..."
+        Backup-FileIfExists -Path $PROFILE -BackupPath $mainBackupPath
+    }
+    else {
         Write-Host "Profile not found, creating profile..."
-        # Install main PowerShell profile
-        Invoke-RestMethod https://github.com/arminzou/PowerShell-Profile/raw/master/Microsoft.PowerShell_profile.ps1 -OutFile $PROFILE
-        Write-Host "The profile @ [$PROFILE] has been created."
-        Write-Host "If you want to make any personal changes or customizations, please do so at [$profilePath\Profile.ps1]"
-
-        # Install VS Code PowerShell profile
-        $vscodeProfilePath = Join-Path $profilePath "Microsoft.VSCode_profile.ps1"
-        $backupPath = Join-Path $profilePath "oldvscodeprofile.ps1"
-
-        if (!(Test-Path -Path $vscodeProfilePath -PathType Leaf)) {
-            Copy-Item -Path $PROFILE -Destination $vscodeProfilePath
-            Write-Host "The VS Code profile @ [$vscodeProfilePath] has been created."
-        }
-        else {
-            Get-Item -Path $vscodeProfilePath | Move-Item -Destination $backupPath -Force
-            Copy-Item -Path $PROFILE -Destination $vscodeProfilePath
-            Write-Host "The VS Code profile @ [$vscodeProfilePath] has been updated and old profile backed up to [$backupPath]"
-        }
-
-        $profileSuccess = $true
-        $successCount++
     }
-    catch {
-        Write-Error "Failed to create or update the profile. Error: $_"
+
+    Save-ProfileFromBestSource -DestinationPath $PROFILE
+    Write-Host "The profile @ [$PROFILE] has been created."
+    if ($profileExists) {
+        Write-Host "Old profile backed up to [$mainBackupPath]"
     }
+    Write-Host "Put personal customizations in [$profilePath\profile.local.ps1]"
+
+    Backup-FileIfExists -Path $vscodeProfilePath -BackupPath $vscodeBackupPath
+    Copy-Item -Path $PROFILE -Destination $vscodeProfilePath -Force
+    if (Test-Path -Path $vscodeBackupPath -PathType Leaf) {
+        Write-Host "The VS Code profile @ [$vscodeProfilePath] has been updated and old profile backed up to [$vscodeBackupPath]"
+    }
+    else {
+        Write-Host "The VS Code profile @ [$vscodeProfilePath] has been created."
+    }
+
+    $profileSuccess = $true
+    $successCount++
 }
-else {
-    try {
-        Write-Host "profile found, updating profile..."
-        $mainBackupPath = Join-Path $profilePath "oldprofile.ps1"
-        Get-Item -Path $PROFILE | Move-Item -Destination $mainBackupPath -Force
-        Invoke-RestMethod https://github.com/arminzou/PowerShell-Profile/raw/master/Microsoft.PowerShell_profile.ps1 -OutFile $PROFILE
-        Write-Host "The profile @ [$PROFILE] has been created and old profile backed up to [$mainBackupPath]"
-        Write-Host "Please back up any persistent components of your old profile to [$profilePath\Profile.ps1]"
-
-        # Update VS Code PowerShell profile
-        $vscodeProfilePath = Join-Path $profilePath "Microsoft.VSCode_profile.ps1"
-        $vscodeBackupPath = Join-Path $profilePath "oldvscodeprofile.ps1"
-        
-        if (Test-Path -Path $vscodeProfilePath -PathType Leaf) {
-            Get-Item -Path $vscodeProfilePath | Move-Item -Destination $vscodeBackupPath -Force
-            Copy-Item -Path $PROFILE -Destination $vscodeProfilePath
-            Write-Host "The VS Code profile @ [$vscodeProfilePath] has been updated and old profile backed up to [$vscodeBackupPath]"
-        }
-        else {
-            Copy-Item -Path $PROFILE -Destination $vscodeProfilePath
-            Write-Host "The VS Code profile @ [$vscodeProfilePath] has been created."
-        }
-
-        $profileSuccess = $true
-        $successCount++
-    }
-    catch {
-        Write-Error "Failed to backup and update the profile. Error: $_"
-    }
+catch {
+    Write-Error "Failed to create or update the profile. Error: $_"
 }
 
 # OMP Install
@@ -227,11 +247,20 @@ try {
         $successCount++
     }
     else {
-        Write-Host "Installing Chocolatey..."
-        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        $chocoSuccess = $true
-        $successCount++
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Write-Host "Installing Chocolatey via winget..."
+            winget install -e --id Chocolatey.Chocolatey --accept-source-agreements --accept-package-agreements
+            if (Get-Command choco -ErrorAction SilentlyContinue) {
+                $chocoSuccess = $true
+                $successCount++
+            }
+            else {
+                throw "Chocolatey installation verification failed."
+            }
+        }
+        else {
+            Write-Warning "Winget not found. Skipping Chocolatey auto-install for safety."
+        }
     }
 }
 catch {
@@ -377,3 +406,16 @@ Write-Host "3. Make sure your terminal is using the CaskaydiaCove NF font"
 Write-Host "4. Test Terminal-Icons by running: Get-ChildItem | Format-Table -View childrenWithIcon"
 Write-Host "5. Test zoxide by running: z --help"
 Write-Host "============================="
+
+# If running from a cloned repo, configure symlink-based profile/module/theme setup.
+$setProfileScript = Join-Path -Path $PSScriptRoot -ChildPath "setprofile.ps1"
+if (Test-Path -Path $setProfileScript -PathType Leaf) {
+    try {
+        Write-Host "`nConfiguring symlink-based profile/module/theme setup..." -ForegroundColor Cyan
+        & $setProfileScript
+    }
+    catch {
+        Write-Warning "Failed to run setprofile.ps1 automatically: $($_.Exception.Message)"
+        Write-Host "You can run it manually from repo root: .\setprofile.ps1" -ForegroundColor Yellow
+    }
+}

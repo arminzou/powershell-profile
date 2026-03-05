@@ -50,13 +50,23 @@ The setup script attempts to install CaskaydiaCove NF automatically by default. 
 
 ## ⚙️ Customizing Your Profile
 
-**Important:** Do not edit `Microsoft.PowerShell_profile.ps1` directly as it will be overwritten by updates.
+**Important:** keep `Microsoft.PowerShell_profile.ps1` in this repo as your shared base profile.
 
-To add your own customizations:
+Use layered customization:
 
-1. Run `Edit-Profile` in PowerShell
-2. Add your custom settings to the newly created `profile.ps1` file
-3. Save the file and restart your PowerShell session
+1. Clone this repo anywhere.
+2. Run `.\setup.ps1` (recommended) from the repo root.
+3. Edit your local override file at `$HOME\Documents\PowerShell\profile.local.ps1`.
+
+When run from a clone, `setup.ps1` calls `setprofile.ps1` to create symlinks for:
+- your profile file
+- repo modules into `$HOME\Documents\PowerShell\Modules`
+- repo custom themes into `$HOME\Documents\PowerShell\CustomThemes`
+
+`setprofile.ps1` is kept as a fast re-link utility (for example, after moving the repo path).
+The repo profile loads `profile.local.ps1` (your machine/user-specific overrides) at the end.
+
+This lets you sync the repo across machines while keeping personal changes local.
 
 ## 🔧 Troubleshooting
 

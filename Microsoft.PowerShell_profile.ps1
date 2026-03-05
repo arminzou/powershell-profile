@@ -64,24 +64,36 @@ if (-not (Test-Path $config.ModulesPath)) {
     Write-Host "Created modules directory at $($config.ModulesPath)" -ForegroundColor Cyan
 }
 
+# Ensure scripts directory exists for state files (e.g., LastExecutionTime.txt)
+if (-not (Test-Path $config.CustomScriptsPath)) {
+    New-Item -ItemType Directory -Path $config.CustomScriptsPath -Force | Out-Null
+}
+
+# Prefer repo-local modules when this profile is executed from the repo.
+$repoModulesPath = Join-Path $PSScriptRoot "Modules"
+$moduleSearchRoots = @($repoModulesPath, $config.ModulesPath) | Select-Object -Unique
+
 # Load modules if they exist and aren't already loaded
 $config.ModulesToLoad | ForEach-Object {
     $moduleName = $_
     
     # Check if module is already loaded
     if (-not (Get-Module -Name $moduleName)) {
-        $modulePath = Join-Path $config.ModulesPath $moduleName
-        
-        if (Test-Path $modulePath) {
+        $modulePath = $moduleSearchRoots |
+            ForEach-Object { Join-Path $_ $moduleName } |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+
+        if ($modulePath) {
             try {
-                Import-Module $moduleName -ErrorAction Stop
+                Import-Module $modulePath -ErrorAction Stop
             }
             catch {
                 Write-Warning "Failed to load module '$moduleName': $_"
             }
         }
         else {
-            Write-Warning "Module '$moduleName' not found at path: $modulePath"
+            Write-Warning "Module '$moduleName' not found in: $($moduleSearchRoots -join ', ')"
         }
     }
 }
@@ -99,10 +111,12 @@ $global:canConnectToGitHub = Test-Connection github.com -Count 1 -Quiet -Timeout
 
 # Import Terminal-Icons Module
 if (-not (Get-Module -Name Terminal-Icons)) {
-    if (-not (Get-Module -ListAvailable -Name Terminal-Icons)) {
-        Install-Module -Name Terminal-Icons -Scope CurrentUser -Force -SkipPublisherCheck
+    if (Get-Module -ListAvailable -Name Terminal-Icons) {
+        Import-Module -Name Terminal-Icons
     }
-    Import-Module -Name Terminal-Icons
+    else {
+        Write-Verbose "Terminal-Icons is not installed. Run setup.ps1 to install dependencies."
+    }
 }
 
 $ChocolateyProfile = "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
@@ -111,11 +125,21 @@ if (Test-Path($ChocolateyProfile)) {
 }
 
 # Check for PowerShell updates based on configured interval
-if (
-    $config.UpdateInterval -eq -1 -or 
-    -not (Test-Path $timeFilePath) -or 
-    ((Get-Date).Date - [datetime]::ParseExact((Get-Content -Path $timeFilePath), 'yyyy-MM-dd', $null).Date).TotalDays -gt $config.UpdateInterval
-) {
+$shouldCheckPowerShellUpdate = $false
+if ($config.UpdateInterval -eq -1 -or -not (Test-Path $timeFilePath)) {
+    $shouldCheckPowerShellUpdate = $true
+}
+else {
+    try {
+        $lastCheck = [datetime]::ParseExact((Get-Content -Path $timeFilePath -Raw).Trim(), 'yyyy-MM-dd', $null)
+        $shouldCheckPowerShellUpdate = ((Get-Date).Date - $lastCheck.Date).TotalDays -gt $config.UpdateInterval
+    }
+    catch {
+        $shouldCheckPowerShellUpdate = $true
+    }
+}
+
+if ($shouldCheckPowerShellUpdate) {
     Update-PowerShell
     $currentTime = Get-Date -Format 'yyyy-MM-dd'
     $currentTime | Out-File -FilePath $timeFilePath
@@ -128,11 +152,23 @@ $PSReadLineOptions = @{
     HistoryNoDuplicates           = $config.PSReadLine.HistoryNoDuplicates
     HistorySearchCursorMovesToEnd = $config.PSReadLine.HistorySearchCursorMovesToEnd
     Colors                        = $config.PSReadLine.Colors
-    PredictionSource              = if ($config.EnablePredictions) { 'HistoryAndPlugin' } else { 'None' }
+    PredictionSource              = 'None'
     PredictionViewStyle           = $config.PredictionViewStyle
     BellStyle                     = 'None'
 }
-Set-PSReadLineOption @PSReadLineOptions
+try {
+    $supportsPredictions = $false
+    if ($config.EnablePredictions) {
+        $supportsPredictions = [bool]$Host.UI.SupportsVirtualTerminal
+    }
+    if ($supportsPredictions) {
+        $PSReadLineOptions.PredictionSource = 'HistoryAndPlugin'
+    }
+    Set-PSReadLineOption @PSReadLineOptions
+}
+catch {
+    Write-Verbose "PSReadLine advanced configuration skipped: $($_.Exception.Message)"
+}
 
 # Custom key handlers
 Set-PSReadLineKeyHandler -Key UpArrow -Function HistorySearchBackward
@@ -155,7 +191,14 @@ Set-PSReadLineOption -AddToHistoryHandler {
 }
 
 # Improved prediction settings
-Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+if ($config.EnablePredictions -and [bool]$Host.UI.SupportsVirtualTerminal) {
+    try {
+        Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+    }
+    catch {
+        Write-Verbose "PredictionSource configuration skipped: $($_.Exception.Message)"
+    }
+}
 Set-PSReadLineOption -MaximumHistoryCount $config.MaxHistoryCount
 
 # Custom completion for common commands
@@ -188,16 +231,6 @@ Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock $scriptblock
 
 # Get theme from profile.ps1 or use a default theme
 function Get-Theme {
-    # First check if theme is already configured in profile
-    if (Test-Path -Path $PROFILE.CurrentUserAllHosts -PathType leaf) {
-        $existingTheme = Select-String -Raw -Path $PROFILE.CurrentUserAllHosts -Pattern "oh-my-posh init pwsh --config"
-        if ($null -ne $existingTheme) {
-            Write-Host "Using existing theme configuration from profile" -ForegroundColor Green
-            Invoke-Expression $existingTheme
-            return
-        }
-    }
-
     # Try to fetch custom theme from GitHub repository
     $customThemeUrl = "https://raw.githubusercontent.com/arminzou/PowerShell-Profile/master/CustomThemes/$($config.DefaultTheme).omp.json"
     try {
@@ -221,15 +254,7 @@ if (Get-Command zoxide -ErrorAction SilentlyContinue) {
     Invoke-Expression (& { (zoxide init --cmd cd powershell | Out-String) })
 }
 else {
-    Write-Host "zoxide command not found. Attempting to install via winget..."
-    try {
-        winget install -e --id ajeetdsouza.zoxide
-        Write-Host "zoxide installed successfully. Initializing..."
-        Invoke-Expression (& { (zoxide init powershell | Out-String) })
-    }
-    catch {
-        Write-Error "Failed to install zoxide. Error: $_"
-    }
+    Write-Verbose "zoxide command not found. Run setup.ps1 to install it."
 }
 
 Set-Alias -Name z -Value __zoxide_z -Option AllScope -Scope Global -Force
@@ -420,6 +445,12 @@ $($PSStyle.Foreground.Green)pst$($PSStyle.Reset) - Pastes from clipboard.
 Use '$($PSStyle.Foreground.Magenta)Show-Help$($PSStyle.Reset)' to display this help message.
 "@
     Write-Host $helpText
+}
+
+# Load machine/user-specific overrides after base profile setup.
+$localOverride = Join-Path -Path $HOME -ChildPath "Documents\PowerShell\profile.local.ps1"
+if (Test-Path -Path $localOverride -PathType Leaf) {
+    . $localOverride
 }
 
 Write-Host "$($PSStyle.Foreground.Yellow)Use 'Show-Help' to display help$($PSStyle.Reset)"

@@ -72,7 +72,7 @@ function Get-NetworkStatistics {
     [CmdletBinding()]
     param()
     
-    $netstat = netstat -ano
+    $netstat = & "$env:SystemRoot\System32\netstat.exe" -ano
     return $netstat
 }
 
@@ -112,11 +112,11 @@ function Start-WinUtilDev {
 New-Alias -Name Get-PubIP -Value Get-PublicIPAddress -Force -Scope Global
 New-Alias -Name flushdns -Value Clear-DnsClientCache -Force -Scope Global
 New-Alias -Name pingtest -Value Test-InternetConnection -Force -Scope Global
-New-Alias -Name netstat -Value Get-NetworkStatistics -Force -Scope Global
+New-Alias -Name nstat -Value Get-NetworkStatistics -Force -Scope Global
 New-Alias -Name winutil -Value Start-WinUtil -Force -Scope Global
 New-Alias -Name winutildev -Value Start-WinUtilDev -Force -Scope Global
 
 # Export functions and aliases
 Export-ModuleMember -Function Get-PublicIPAddress, Clear-DnsClientCache, Test-InternetConnection, 
 Get-NetworkStatistics, Start-WinUtil, Start-WinUtilDev
-Export-ModuleMember -Alias Get-PubIP, flushdns, pingtest, netstat, winutil, winutildev 
+Export-ModuleMember -Alias Get-PubIP, flushdns, pingtest, nstat, winutil, winutildev 

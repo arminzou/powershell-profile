@@ -1,166 +1,199 @@
-# Test script for verifying PowerShell profile setup
+# Test script for verifying PowerShell profile setup (symlink model)
+[CmdletBinding()]
+param()
+
 Write-Host "===== PowerShell Profile Setup Test =====" -ForegroundColor Cyan
 
-# Initialize test results
 $testResults = @{}
 
-# Function to update test results
 function Update-TestResult {
-    param (
+    param(
+        [Parameter(Mandatory = $true)]
         [string]$Component,
+        [Parameter(Mandatory = $true)]
         [bool]$Success,
         [string]$Details = ""
     )
-    
-    $testResults[$Component] = $Success
-    
+
+    $testResults[$Component] = @{
+        Success = $Success
+        Details = $Details
+    }
+
     if ($Success) {
         Write-Host "  [PASS] $Component" -ForegroundColor Green
-        if ($Details) {
-            Write-Host "     $Details" -ForegroundColor Gray
-        }
-    } else {
+    }
+    else {
         Write-Host "  [FAIL] $Component" -ForegroundColor Red
-        if ($Details) {
-            Write-Host "     $Details" -ForegroundColor Gray
-        }
+    }
+
+    if ($Details) {
+        Write-Host "     $Details" -ForegroundColor Gray
     }
 }
 
-# Test 1: PowerShell Profile
-Write-Host "`nTesting PowerShell Profile..." -ForegroundColor Yellow
-try {
-    $profileExists = Test-Path -Path $PROFILE -PathType Leaf
-    if ($profileExists) {
-        $profileContent = Get-Content -Path $PROFILE -Raw
-        $hasOhMyPoshImport = $profileContent -match "oh-my-posh"
-        
-        if ($hasOhMyPoshImport) {
-            Update-TestResult -Component "PowerShell Profile" -Success $true -Details "Profile exists and contains Oh My Posh configuration"
-        } else {
-            Update-TestResult -Component "PowerShell Profile" -Success $true -Details "Profile exists but may not have Oh My Posh configuration"
-        }
-    } else {
-        Update-TestResult -Component "PowerShell Profile" -Success $false -Details "Profile file does not exist at $PROFILE"
+function Test-SymlinkTarget {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$ExpectedTarget
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return @{ Success = $false; Details = "Path not found: $Path" }
     }
-} catch {
-    Update-TestResult -Component "PowerShell Profile" -Success $false -Details "Error: $_"
+
+    $item = Get-Item -LiteralPath $Path -Force
+    $isLink = ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if (-not $isLink) {
+        return @{ Success = $false; Details = "Not a symlink: $Path" }
+    }
+
+    $target = $item.Target
+    if ($target -eq $ExpectedTarget) {
+        return @{ Success = $true; Details = "Symlink OK: $Path -> $target" }
+    }
+
+    return @{ Success = $false; Details = "Symlink target mismatch. Expected: $ExpectedTarget, Actual: $target" }
 }
 
-# Test 2: Oh My Posh
-Write-Host "`nTesting Oh My Posh installation..." -ForegroundColor Yellow
-try {
-    $ompCommand = Get-Command oh-my-posh -ErrorAction SilentlyContinue
-    if ($ompCommand) {
-        $ompVersion = & oh-my-posh --version
-        Update-TestResult -Component "Oh My Posh" -Success $true -Details "Version: $ompVersion"
-    } else {
-        # Try checking with winget as fallback
-        $wingetResult = winget list --name "OhMyPosh" -e
-        if ($wingetResult -match "Oh My Posh") {
-            Update-TestResult -Component "Oh My Posh" -Success $true -Details "Installed according to winget"
-        } else {
-            Update-TestResult -Component "Oh My Posh" -Success $false -Details "Not found in PATH or winget"
-        }
+$profileDir = Split-Path -Path $PROFILE.CurrentUserAllHosts -Parent
+$repoRoot = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
+$repoProfile = Join-Path -Path $repoRoot -ChildPath "Microsoft.PowerShell_profile.ps1"
+$hostProfile = $PROFILE.CurrentUserCurrentHost
+$allHostsProfile = $PROFILE.CurrentUserAllHosts
+$localOverride = Join-Path -Path $profileDir -ChildPath "profile.local.ps1"
+
+Write-Host "`nTesting profile symlink..." -ForegroundColor Yellow
+if (Test-Path -Path $repoProfile -PathType Leaf) {
+    $result = Test-SymlinkTarget -Path $hostProfile -ExpectedTarget $repoProfile
+    Update-TestResult -Component "Host Profile Symlink" -Success $result.Success -Details $result.Details
+}
+else {
+    Update-TestResult -Component "Host Profile Symlink" -Success $false -Details "Repo profile not found at: $repoProfile"
+}
+
+Write-Host "`nTesting AllHosts profile behavior..." -ForegroundColor Yellow
+if (Test-Path -LiteralPath $allHostsProfile) {
+    $allHostsItem = Get-Item -LiteralPath $allHostsProfile -Force
+    $allHostsIsLink = ($allHostsItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0
+    if ($allHostsIsLink -and $allHostsItem.Target -eq $repoProfile) {
+        Update-TestResult -Component "AllHosts Profile" -Success $false -Details "AllHosts profile points to repo profile and may cause duplicate loading."
     }
-} catch {
+    else {
+        Update-TestResult -Component "AllHosts Profile" -Success $true -Details "AllHosts profile does not duplicate host profile symlink."
+    }
+}
+else {
+    Update-TestResult -Component "AllHosts Profile" -Success $true -Details "AllHosts profile file not present (acceptable): $allHostsProfile"
+}
+
+Write-Host "`nTesting local override profile..." -ForegroundColor Yellow
+if (Test-Path -Path $localOverride -PathType Leaf) {
+    Update-TestResult -Component "Local Override Profile" -Success $true -Details "Found: $localOverride"
+}
+else {
+    Update-TestResult -Component "Local Override Profile" -Success $false -Details "Missing: $localOverride"
+}
+
+Write-Host "`nTesting module symlinks..." -ForegroundColor Yellow
+$moduleNames = @("FileManagement", "GitAliases", "NetworkTools", "SystemUtilities", "Productivity")
+$modulesRoot = Join-Path -Path $profileDir -ChildPath "Modules"
+$allModulesOk = $true
+$moduleDetails = @()
+
+foreach ($moduleName in $moduleNames) {
+    $targetPath = Join-Path -Path $modulesRoot -ChildPath $moduleName
+    $sourcePath = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath "Modules") -ChildPath $moduleName
+    $res = Test-SymlinkTarget -Path $targetPath -ExpectedTarget $sourcePath
+    if (-not $res.Success) { $allModulesOk = $false }
+    $moduleDetails += "${moduleName}: $($res.Success)"
+}
+
+Update-TestResult -Component "Module Symlinks" -Success $allModulesOk -Details ($moduleDetails -join ", ")
+
+Write-Host "`nTesting custom theme symlinks..." -ForegroundColor Yellow
+$themesSource = Join-Path -Path $repoRoot -ChildPath "CustomThemes"
+$themesTarget = Join-Path -Path $profileDir -ChildPath "CustomThemes"
+$themesOk = $true
+$themeDetails = @()
+
+if (Test-Path -Path $themesSource -PathType Container) {
+    Get-ChildItem -Path $themesSource -File | ForEach-Object {
+        $source = $_.FullName
+        $target = Join-Path -Path $themesTarget -ChildPath $_.Name
+        $res = Test-SymlinkTarget -Path $target -ExpectedTarget $source
+        if (-not $res.Success) { $themesOk = $false }
+        $themeDetails += "$($_.Name): $($res.Success)"
+    }
+    Update-TestResult -Component "Theme Symlinks" -Success $themesOk -Details ($themeDetails -join ", ")
+}
+else {
+    Update-TestResult -Component "Theme Symlinks" -Success $false -Details "Source themes directory not found: $themesSource"
+}
+
+Write-Host "`nTesting dependencies..." -ForegroundColor Yellow
+try {
+    $omp = Get-Command oh-my-posh -ErrorAction SilentlyContinue
+    Update-TestResult -Component "Oh My Posh" -Success ([bool]$omp) -Details ($(if ($omp) { & oh-my-posh --version } else { "Not found in PATH" }))
+}
+catch {
     Update-TestResult -Component "Oh My Posh" -Success $false -Details "Error: $_"
 }
 
-# Test 3: Nerd Font
-Write-Host "`nTesting Nerd Font installation..." -ForegroundColor Yellow
 try {
-    [void] [System.Reflection.Assembly]::LoadWithPartialName("System.Drawing")
-    $fontFamilies = (New-Object System.Drawing.Text.InstalledFontCollection).Families.Name
-    if ($fontFamilies -contains "CaskaydiaCove NF") {
-        Update-TestResult -Component "Nerd Font" -Success $true -Details "CaskaydiaCove NF is installed"
-    } else {
-        Update-TestResult -Component "Nerd Font" -Success $false -Details "CaskaydiaCove NF is not installed"
-    }
-} catch {
-    Update-TestResult -Component "Nerd Font" -Success $false -Details "Error: $_"
+    $terminalIcons = Get-Module -ListAvailable -Name Terminal-Icons
+    Update-TestResult -Component "Terminal-Icons" -Success ([bool]$terminalIcons) -Details ($(if ($terminalIcons) { "Version: $($terminalIcons.Version)" } else { "Module not found" }))
 }
-
-# Test 4: Chocolatey
-Write-Host "`nTesting Chocolatey installation..." -ForegroundColor Yellow
-try {
-    $chocoCommand = Get-Command choco -ErrorAction SilentlyContinue
-    if ($chocoCommand) {
-        $chocoVersion = & choco --version
-        Update-TestResult -Component "Chocolatey" -Success $true -Details "Version: $chocoVersion"
-    } else {
-        Update-TestResult -Component "Chocolatey" -Success $false -Details "Not found in PATH"
-    }
-} catch {
-    Update-TestResult -Component "Chocolatey" -Success $false -Details "Error: $_"
-}
-
-# Test 5: Terminal-Icons
-Write-Host "`nTesting Terminal-Icons installation..." -ForegroundColor Yellow
-try {
-    $terminalIconsModule = Get-Module -ListAvailable -Name Terminal-Icons
-    if ($terminalIconsModule) {
-        $version = $terminalIconsModule.Version.ToString()
-        Update-TestResult -Component "Terminal-Icons" -Success $true -Details "Version: $version"
-        
-        # Test if it can be imported
-        Import-Module Terminal-Icons -ErrorAction Stop
-        Write-Host "     Module imported successfully" -ForegroundColor Gray
-    } else {
-        Update-TestResult -Component "Terminal-Icons" -Success $false -Details "Module not found"
-    }
-} catch {
+catch {
     Update-TestResult -Component "Terminal-Icons" -Success $false -Details "Error: $_"
 }
 
-# Test 6: zoxide
-Write-Host "`nTesting zoxide installation..." -ForegroundColor Yellow
 try {
-    $zoxideCommand = Get-Command zoxide -ErrorAction SilentlyContinue
-    if ($zoxideCommand) {
-        $zoxideVersion = & zoxide --version
-        Update-TestResult -Component "zoxide" -Success $true -Details "Version: $zoxideVersion"
-    } else {
-        # Try checking with winget as fallback
-        $wingetResult = winget list --id ajeetdsouza.zoxide
-        if ($wingetResult -match "zoxide") {
-            Update-TestResult -Component "zoxide" -Success $true -Details "Installed according to winget"
-        } else {
-            Update-TestResult -Component "zoxide" -Success $false -Details "Not found in PATH or winget"
-        }
-    }
-} catch {
+    $zoxide = Get-Command zoxide -ErrorAction SilentlyContinue
+    Update-TestResult -Component "zoxide" -Success ([bool]$zoxide) -Details ($(if ($zoxide) { & zoxide --version } else { "Not found in PATH" }))
+}
+catch {
     Update-TestResult -Component "zoxide" -Success $false -Details "Error: $_"
 }
 
-# Calculate overall success
-$passedTests = ($testResults.Values | Where-Object { $_ -eq $true }).Count
+$passedTests = ($testResults.Values | Where-Object { $_.Success -eq $true }).Count
 $totalTests = $testResults.Count
-Write-Host "`nPassed $passedTests out of $totalTests tests" -ForegroundColor Cyan
 
-# Provide recommendations for failed tests
-Write-Host "`n===== Recommendations for Failed Tests =====" -ForegroundColor Yellow
-foreach ($component in $testResults.Keys) {
-    if ($testResults[$component] -eq $false) {
-        Write-Host "Component: $component" -ForegroundColor Red
-        switch ($component) {
-            "PowerShell Profile" {
-                Write-Host "  - Run the setup script again to create the PowerShell profile" -ForegroundColor Yellow
-            }
-            "Oh My Posh" {
-                Write-Host "  - Install Oh My Posh manually: winget install JanDeDobbeleer.OhMyPosh -e" -ForegroundColor Yellow
-            }
-            "Nerd Font" {
-                Write-Host "  - Download and install CaskaydiaCove NF font manually from https://www.nerdfonts.com/font-downloads" -ForegroundColor Yellow
-            }
-            "Chocolatey" {
-                Write-Host "  - Install Chocolatey manually using the command in setup.ps1" -ForegroundColor Yellow
-            }
-            "Terminal-Icons" {
-                Write-Host "  - Install Terminal-Icons manually: Install-Module -Name Terminal-Icons -Repository PSGallery -Force -Scope CurrentUser" -ForegroundColor Yellow
-            }
-            "zoxide" {
-                Write-Host "  - Install zoxide manually: winget install -e --id ajeetdsouza.zoxide" -ForegroundColor Yellow
+Write-Host "`n===== Summary =====" -ForegroundColor Cyan
+Write-Host "Passed $passedTests out of $totalTests tests" -ForegroundColor Cyan
+
+if ($passedTests -lt $totalTests) {
+    Write-Host "`n===== Recommendations for Failed Tests =====" -ForegroundColor Yellow
+    foreach ($component in $testResults.Keys) {
+        if (-not $testResults[$component].Success) {
+            Write-Host "Component: $component" -ForegroundColor Red
+            switch ($component) {
+                "Host Profile Symlink" {
+                    Write-Host "  - Run .\\setprofile.ps1 from the repo root." -ForegroundColor Yellow
+                }
+                "AllHosts Profile" {
+                    Write-Host "  - Ensure profile.ps1 is not symlinked to the same repo profile as host profile." -ForegroundColor Yellow
+                }
+                "Local Override Profile" {
+                    Write-Host "  - Create $localOverride (or re-run .\\setprofile.ps1)." -ForegroundColor Yellow
+                }
+                "Module Symlinks" {
+                    Write-Host "  - Re-run .\\setprofile.ps1 to recreate module links." -ForegroundColor Yellow
+                }
+                "Theme Symlinks" {
+                    Write-Host "  - Re-run .\\setprofile.ps1 to recreate theme links." -ForegroundColor Yellow
+                }
+                "Oh My Posh" {
+                    Write-Host "  - Install with: winget install -e --id JanDeDobbeleer.OhMyPosh" -ForegroundColor Yellow
+                }
+                "Terminal-Icons" {
+                    Write-Host "  - Install with: Install-Module -Name Terminal-Icons -Repository PSGallery -Scope CurrentUser -Force" -ForegroundColor Yellow
+                }
+                "zoxide" {
+                    Write-Host "  - Install with: winget install -e --id ajeetdsouza.zoxide" -ForegroundColor Yellow
+                }
             }
         }
     }

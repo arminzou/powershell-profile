@@ -135,4 +135,5 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-repomix-output.txt
+**/LastExecutionTime.txt
+profile.local.ps1

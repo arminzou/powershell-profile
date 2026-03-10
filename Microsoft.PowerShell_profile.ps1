@@ -12,7 +12,7 @@ $config = @{
     InstallMissingModules = $true  # Auto-install missing modules
     
     # UI settings
-    DefaultTheme          = "powerlevel10k_lean"  # Default Oh-My-Posh theme if not set elsewhere
+    DefaultTheme          = "jandedobbeleer"  # Default Oh-My-Posh theme if not set elsewhere
     EnablePredictions     = $true  # Enable PSReadLine predictions
     PredictionViewStyle   = "ListView" # Style for predictions
     MaxHistoryCount       = 10000  # Maximum number of commands to store in history
@@ -231,11 +231,17 @@ Register-ArgumentCompleter -Native -CommandName dotnet -ScriptBlock $scriptblock
 
 # Get theme from profile.ps1 or use a default theme
 function Get-Theme {
+
     $themeFileName = "$($config.DefaultTheme).omp.json"
     $localThemeRoots = @(
         (Join-Path $PSScriptRoot "CustomThemes"),
         (Join-Path "$env:USERPROFILE\Documents\PowerShell" "CustomThemes")
     ) | Select-Object -Unique
+    $officialThemeRoots = @(
+        $env:POSH_THEMES_PATH,
+        (Join-Path "$env:USERPROFILE\AppData\Local\Programs\oh-my-posh\themes" ""),
+        (Join-Path "$env:LOCALAPPDATA\Programs\oh-my-posh\themes" "")
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 
     $localThemePath = $localThemeRoots |
     ForEach-Object { Join-Path $_ $themeFileName } |
@@ -244,6 +250,16 @@ function Get-Theme {
 
     if ($localThemePath) {
         oh-my-posh init pwsh --config $localThemePath | Invoke-Expression
+        return
+    }
+
+    $officialThemePath = $officialThemeRoots |
+    ForEach-Object { Join-Path $_ $themeFileName } |
+    Where-Object { Test-Path $_ -PathType Leaf } |
+    Select-Object -First 1
+
+    if ($officialThemePath) {
+        oh-my-posh init pwsh --config $officialThemePath | Invoke-Expression
         return
     }
 
